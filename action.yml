@@ -1,0 +1,100 @@
+name: 'Maven Verify'
+description: 'Запуск Maven verify с настройками'
+author: 'demid1984'
+branding:
+  icon: 'package'
+  color: 'blue'
+
+inputs:
+  java-version:
+    description: 'Версия Java'
+    required: true
+  distribution:
+    description: 'Дистрибутив Java'
+    required: true
+  m2-settings:
+    description: 'Путь к файлу settings.xml'
+    required: false
+  profile-name:
+    description: 'Имя профиля Maven'
+    required: false
+  maven-args:
+    description: 'Дополнительные аргументы Maven'
+    required: false
+  env-vars-multiline:
+    description: 'Переменные окружения в формате KEY=VALUE (каждая на новой строке)'
+    required: false
+  cache-key:
+    description: 'Ключ кэша. Если ключ не заполнен, то кэширование не включено'
+    required: false
+    default: ''
+
+runs:
+  using: "composite"
+  steps:
+    - name: Check out the repo
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.ref }}
+        fetch-depth: 0
+
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        java-version: ${{ inputs.java-version }}
+        distribution: ${{ inputs.distribution }}
+
+    - name: Set environment variables
+      id: set-env
+      shell: bash
+      run: |
+        ENV_VARS='${{ inputs.env-vars-multiline }}'
+
+        if [ -n "$ENV_VARS" ]; then
+          echo "Setting environment variables..."
+
+          # Читаем каждую строку и устанавливаем переменную
+          IFS=$'\n'
+          for line in $ENV_VARS; do
+            # Пропускаем пустые строки и комментарии
+            if [ -n "$line" ] && [[ ! "$line" =~ ^[[:space:]]*# ]]; then
+              # Разделяем ключ и значение
+              key=$(echo "$line" | cut -d'=' -f1)
+              value=$(echo "$line" | cut -d'=' -f2-)
+
+              # Устанавливаем переменную окружения
+              echo "${key}=${value}" >> $GITHUB_ENV
+              echo "Set $key"
+            fi
+          done
+          unset IFS
+        fi
+        
+    - name: Cache Maven dependencies
+      if: inputs.cache-key != ''
+      uses: actions/cache@v3
+      with:
+        path: ~/.m2
+        key: maven-${{ runner.os }}-${{ inputs.cache-key }}-${{ hashFiles('**/pom.xml') }}
+        restore-keys: |
+          maven-${{ runner.os }}-${{ inputs.cache-key }}-
+
+    - name: Run Maven verify
+      shell: bash
+      run: |
+        CMD="./mvnw -U verify"
+
+        if [ -f "${{ inputs.m2-settings }}" ]; then
+          CMD="$CMD -s ${{ inputs.m2-settings }}"
+        fi
+
+        if [ -n "${{ inputs.profile-name }}" ]; then
+          CMD="$CMD -P ${{ inputs.profile-name }}"
+        fi
+
+        if [ -n "${{ inputs.maven-args }}" ]; then
+          CMD="$CMD ${{ inputs.maven-args }}"
+        fi
+
+        echo "Running: $CMD"
+        $CMD
