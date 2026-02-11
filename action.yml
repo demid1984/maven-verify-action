@@ -1,5 +1,5 @@
 name: 'Maven Verify'
-description: 'Запуск Maven verify с настройками'
+description: 'Запуск Maven verify с поддержкой настроек, профилей, кэширования и переменных окружения'
 author: 'demid1984'
 branding:
   icon: 'package'
@@ -7,70 +7,84 @@ branding:
 
 inputs:
   java-version:
-    description: 'Версия Java'
+    description: 'Версия Java (например, 17, 21)'
     required: true
   distribution:
-    description: 'Дистрибутив Java'
+    description: 'Дистрибутив Java (например, temurin, adopt)'
     required: true
   m2-settings:
-    description: 'Путь к файлу settings.xml'
+    description: 'Путь к файлу `settings.xml` относительно корня репозитория (опционально)'
     required: false
+    default: ''
   profile-name:
-    description: 'Имя профиля Maven'
+    description: 'Имя Maven-профиля (опционально)'
     required: false
+    default: ''
   maven-args:
-    description: 'Дополнительные аргументы Maven'
+    description: 'Дополнительные аргументы для Maven (например, `-DskipTests`)'
     required: false
+    default: ''
   env-vars-multiline:
-    description: 'Переменные окружения в формате KEY=VALUE (каждая на новой строке)'
+    description: |
+      Переменные окружения в формате `KEY=VALUE` (по одной на строку).
+      Пустые строки и строки, начинающиеся с `#`, игнорируются.
     required: false
+    default: ''
   cache-key:
-    description: 'Ключ кэша. Если ключ не заполнен, то кэширование не включено'
+    description: |
+      Ключ кэша зависимостей Maven. Если не указан — кэширование отключено.
+      Рекомендуется использовать уникальный ключ, отражающий конфигурацию (например, `deps-v1`).
     required: false
     default: ''
 
 runs:
-  using: "composite"
+  using: 'composite'
   steps:
-    - name: Check out the repo
+    - name: 📦 Checkout repository
       uses: actions/checkout@v4
       with:
         ref: ${{ github.ref }}
         fetch-depth: 0
 
-    - name: Setup Java
+    - name: 🧪 Setup Java
       uses: actions/setup-java@v4
       with:
         java-version: ${{ inputs.java-version }}
         distribution: ${{ inputs.distribution }}
 
-    - name: Set environment variables
+    - name: 🔧 Set environment variables
       id: set-env
       shell: bash
       run: |
         ENV_VARS='${{ inputs.env-vars-multiline }}'
 
-        if [ -n "$ENV_VARS" ]; then
-          echo "Setting environment variables..."
-
-          # Читаем каждую строку и устанавливаем переменную
+        if [[ -n "$ENV_VARS" ]]; then
+          echo "::group::⚙️  Parsing and exporting environment variables"
           IFS=$'\n'
           for line in $ENV_VARS; do
             # Пропускаем пустые строки и комментарии
-            if [ -n "$line" ] && [[ ! "$line" =~ ^[[:space:]]*# ]]; then
-              # Разделяем ключ и значение
-              key=$(echo "$line" | cut -d'=' -f1)
-              value=$(echo "$line" | cut -d'=' -f2-)
+            trimmed=$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            [[ -z "$trimmed" || "$trimmed" =~ ^# ]] && continue
 
-              # Устанавливаем переменную окружения
-              echo "${key}=${value}" >> $GITHUB_ENV
-              echo "Set $key"
+            # Извлекаем ключ и значение (поддержка `=` в значении)
+            key="${line%%=*}"
+            value="${line#*=}"
+
+            if [[ -z "$key" ]]; then
+              echo "::warning::Пропущена строка: '$line' — пустой ключ"
+              continue
             fi
+
+            echo "$key=$value" >> "$GITHUB_ENV"
+            echo "✅ $key"
           done
           unset IFS
+          echo "::endgroup::"
+        else
+          echo "ℹ️  Переменные окружения не указаны"
         fi
-        
-    - name: Cache Maven dependencies
+
+    - name: 📦 Cache Maven dependencies
       if: inputs.cache-key != ''
       uses: actions/cache@v3
       with:
@@ -79,22 +93,28 @@ runs:
         restore-keys: |
           maven-${{ runner.os }}-${{ inputs.cache-key }}-
 
-    - name: Run Maven verify
+    - name: ⚙️ Run Maven verify
       shell: bash
       run: |
         CMD="./mvnw -U verify"
 
-        if [ -f "${{ inputs.m2-settings }}" ]; then
+        # Добавляем settings.xml, если указан и существует
+        if [[ -n "${{ inputs.m2-settings }}" && -f "${{ inputs.m2-settings }}" ]]; then
           CMD="$CMD -s ${{ inputs.m2-settings }}"
+          echo "ℹ️  Используется settings.xml: ${{ inputs.m2-settings }}"
+        elif [[ -n "${{ inputs.m2-settings }}" ]]; then
+          echo "::warning::Указанный файл settings.xml не найден: ${{ inputs.m2-settings }}"
         fi
 
-        if [ -n "${{ inputs.profile-name }}" ]; then
+        # Добавляем профиль, если задан
+        if [[ -n "${{ inputs.profile-name }}" ]]; then
           CMD="$CMD -P ${{ inputs.profile-name }}"
         fi
 
-        if [ -n "${{ inputs.maven-args }}" ]; then
+        # Добавляем дополнительные аргументы
+        if [[ -n "${{ inputs.maven-args }}" ]]; then
           CMD="$CMD ${{ inputs.maven-args }}"
         fi
 
-        echo "Running: $CMD"
+        echo "🚀 Выполняется: $CMD"
         $CMD
