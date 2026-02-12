@@ -96,6 +96,8 @@ runs:
     - name: ⚙️ Run Maven verify
       shell: bash
       run: |
+        echo api.version=1.44 >> ~/.docker-java.properties
+        
         CMD="./mvnw -U verify"
 
         # Добавляем settings.xml, если указан и существует
